@@ -36,8 +36,42 @@ let verifiedLevels, sortedLevels;
 let textMaterial = new THREE.MeshBasicMaterial({color: 0xffffff});
 let endLocation = new THREE.Vector3(0, playerHeight, 0);
 let signLocations = [];
-let signPositions = [];
 let time = 0;
+let challengeSeed = null;
+let challengePRNG = null;
+let isMultiplayer = false;
+let isHost = false;
+let peer = null;
+let hostConn = null;
+let partyConnections = {};
+let myName = "";
+let partyLevels = [];
+let partyCurrentRound = 0;
+let partyPlayersGuessed = [];
+let partyRoundState = "playing"; // "playing" or "over"
+
+function mulberry32(a) {
+    return function() {
+      let t = a += 0x6D2B79F5;
+      t = Math.imul(t ^ t >>> 15, t | 1);
+      t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    }
+}
+
+const urlParams = new URLSearchParams(window.location.search);
+let partyId = null;
+if (urlParams.has('party')) {
+    partyId = urlParams.get('party');
+    isMultiplayer = true;
+    isHost = false;
+}
+if (urlParams.has('challenge')) {
+    challengeSeed = parseInt(urlParams.get('challenge'));
+    challengePRNG = mulberry32(challengeSeed);
+    let diff = urlParams.get('diff');
+    if (diff) difficulty = isNaN(parseInt(diff)) ? diff : parseInt(diff);
+}
 
 let home = document.getElementById("home");
 let materialList = [
@@ -186,12 +220,64 @@ async function openProto(link) {
     return level;
 }
 
+async function loadLeaderboard() {
+    let leaderboard = document.getElementById("lbd");
+    leaderboard.innerHTML = "Loading Leaderboard...";
+    try {
+        let fetchUrl = challengeSeed 
+            ? `https://grabguessr.vestri.workers.dev/leaderboard?challenge=${challengeSeed}`
+            : `https://grabguessr.vestri.workers.dev/leaderboard?difficulty=${difficulty}`;
+        let res = await fetch(fetchUrl);
+        let data = await res.json();
+        leaderboard.innerHTML = challengeSeed ? "<h3>Challenge Leaderboard</h3>" : "<h3>Global Leaderboard</h3>";
+        if (data.length === 0) {
+            leaderboard.innerHTML += "<p>No scores yet. Be the first!</p>";
+        } else {
+            data.forEach((entry, i) => {
+                leaderboard.innerHTML += `<p>${i + 1}. ${entry.name}: ${entry.score}</p>`;
+            });
+        }
+    } catch (e) {
+        leaderboard.innerHTML = "Failed to load leaderboard.";
+    }
+}
+
+async function submitScore() {
+    let name = document.getElementById("player-name").value;
+    if (!name) return alert("Please enter a name!");
+    
+    document.getElementById("submit-btn").disabled = true;
+    document.getElementById("submit-btn").innerText = "Submitting...";
+
+    try {
+        await fetch("https://grabguessr.vestri.workers.dev/leaderboard", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, score, difficulty, challenge: challengeSeed, token: gameToken })
+        });
+        document.getElementById("submit-score").style.display = "none";
+        loadLeaderboard();
+        score = 0; // Reset after successful submission
+    } catch (e) {
+        alert("Failed to submit score.");
+    } finally {
+        document.getElementById("submit-btn").disabled = false;
+        document.getElementById("submit-btn").innerText = "Submit Score";
+    }
+}
+
+document.getElementById("submit-btn").addEventListener("click", submitScore);
+
 async function init() {
     
     console.log("Initializing");
 
     const verifiedLevelsData = await fetch("https://grab-tools.live/stats_data/all_verified.json");
-    verifiedLevels = await verifiedLevelsData.json();
+    let initialLevels = await verifiedLevelsData.json();
+    verifiedLevels = initialLevels.map(l => ({
+        ...l,
+        thumb: l.images?.thumb?.key
+    }));
     sortedLevels = [...verifiedLevels].sort((a, b) => b?.statistics?.total_played - a?.statistics?.total_played);
 
     console.log("Loaded levels");
@@ -220,19 +306,40 @@ async function init() {
     isLoading = false;
     document.getElementById("loader").style.display = "none";
     document.getElementById("start-button").style.display = "block";
+    document.getElementById("challenge-btn").style.display = "block";
+    document.getElementById("party-btn").style.display = "block";
     console.log("Loaded");
+
+    if (partyId) {
+        document.getElementById("main-menu-panel").style.display = "none";
+        let lbdPanel = document.getElementById("leaderboard-panel");
+        if (lbdPanel) lbdPanel.style.display = "none";
+        document.getElementById("multiplayer-lobby-panel").style.display = "flex";
+    }
+
 
     let startButton = document.getElementById("start");
     startButton.addEventListener( 'click', () => {
         home.style.display = "none";
         score = 0;
+        gameToken = null;
         loadRandomLevel();
     } );
 
     setInterval(() => {
         if (time <= 5000) {
-            time++;
+            if (partyRoundState !== "over") time++;
             displayBonus();
+            
+            if (isMultiplayer && window.partyTimeLimit > 0) {
+                let timeRemaining = Math.max(window.partyTimeLimit - time, 0);
+                document.getElementById("time").innerText = "Time Left: " + timeRemaining;
+                if (isHost && timeRemaining === 0 && partyRoundState === "playing") {
+                    checkAllGuessedForceFail();
+                }
+            } else {
+                document.getElementById("time").innerText = "Time: " + time;
+            }
         }
     }, 1000);
 
@@ -241,12 +348,18 @@ async function init() {
 
 async function loadRandomLevel() {
     if ( isLoading ) { return; }
-    if ( round == 10 ) {
+    if (round == 10) {
         round = 0;
         displayRound();
         home.style.display = "flex";
-        localStorage.setItem("GG-Score-" + difficulty, score);
-        score = 0;
+        
+        let currentHigh = parseInt(localStorage.getItem("GG-Score-" + difficulty) || "0");
+        let newHigh = Math.max(score, currentHigh);
+        localStorage.setItem("GG-Score-" + difficulty, newHigh);
+        
+        document.getElementById("submit-score").style.display = "flex";
+        loadLeaderboard();
+        
         return;
     }
     round++;
@@ -255,12 +368,18 @@ async function loadRandomLevel() {
     let randomLevel;
     console.log(difficulty);
     if (difficulty == "impossible") {
-        let reqData = await fetch("https://api.slin.dev/grab/v1/get_random_level");
+        let reqData = await fetch("https://grabguessr.vestri.workers.dev/get_random_level");
         let data = await reqData.json();
         randomLevel = data;
     } else {
-        randomLevel = sortedLevels[Math.floor(Math.random() * Math.min(difficulty, sortedLevels.length - 1))];
-        let reqData = await fetch(`https://api.slin.dev/grab/v1/details/${randomLevel.identifier.split(":").join("/")}`);
+        let randIdx;
+        if (challengePRNG) {
+            randIdx = Math.floor(challengePRNG() * Math.min(difficulty, sortedLevels.length - 1));
+        } else {
+            randIdx = Math.floor(Math.random() * Math.min(difficulty, sortedLevels.length - 1));
+        }
+        randomLevel = sortedLevels[randIdx];
+        let reqData = await fetch(`https://grabguessr.vestri.workers.dev/details/${randomLevel.identifier.split(":").join("/")}`);
         let data = await reqData.json();
         randomLevel = data;
     }
@@ -272,16 +391,40 @@ async function loadRandomLevel() {
     });
     startHint.classList.add("unlocked");
     displayBonus();
-    const downloadUrl = `https://api.slin.dev/grab/v1/download/${randomLevel.data_key.replace("level_data:", "").split(":").join("/")}`;
+    const downloadUrl = `https://grabguessr.vestri.workers.dev/download/${randomLevel.data_key.replace("level_data:", "").split(":").join("/")}`;
     const level =  await openProto(downloadUrl);
     await loadLevel(level);
 }
 
 let randomButton = document.getElementById("randomButton");
 
-randomButton.addEventListener( 'click', () => {
+let gameToken = null;
+async function logRound() {
+    try {
+        let res = await fetch("https://grabguessr.vestri.workers.dev/log_round", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ round: round, totalScore: score, previousToken: gameToken })
+        });
+        if (res.ok) {
+            let data = await res.json();
+            gameToken = data.token;
+        } else {
+            console.error("Anti-cheat blocked round log");
+            gameToken = null;
+        }
+    } catch(e) {}
+}
+
+randomButton.addEventListener( 'click', async () => {
+    if (isMultiplayer) {
+         if (partyRoundState === "playing") guess("skip_invalid");
+         return;
+    }
     createPopup();
     displayScore();
+    document.getElementById("loader").style.display = "block";
+    await logRound();
     loadRandomLevel();
 });
 
@@ -292,19 +435,78 @@ function displayBonus() {
     document.getElementById("bonus").innerText = `+ ${Math.max(0, ((5 - hintsGiven) * 1000) - time)}`;
 }
 function displayRound() {
-    document.getElementById("round").innerText = `Round: ${round}/10`;
+    document.getElementById("round").innerText = `Round: ${round}/${isMultiplayer ? partyLevels.length : 10}`;
 }
 
-function guess(identifier) {
+async function guess(identifier) {
+    if (isMultiplayer) {
+        if (partyRoundState !== "playing" || window.localGuessLocked) return;
+        window.localGuessLocked = true; // Local lock preventing multi-click spam sync leaks
+        
+        let exactMatch = (identifier == answer);
+        let partialMatch = (!exactMatch && identifier.split(":")[0] == answer.split(":")[0]);
+        
+        if (exactMatch || partialMatch) {
+            let pointsEarned = Math.max(0, ((5 - hintsGiven) * 1000) - time);
+            
+            score += pointsEarned;
+            displayScore();
+            
+            if (isHost) {
+                if (typeof multiplayerScores === 'undefined') window.multiplayerScores = {};
+                multiplayerScores[peer.id] = (multiplayerScores[peer.id] || 0) + pointsEarned;
+                
+                if (window.partyGameMode === "score_attack") {
+                     let ro = document.getElementById("round-overlay");
+                     ro.style.display = "flex";
+                     ro.style.backgroundColor = "rgba(46,204,113,0.8)";
+                     document.getElementById("round-overlay-title").innerText = "Correct!";
+                     document.getElementById("round-overlay-subtitle").innerText = `+${pointsEarned} Points. Waiting for others...`;
+                     if (!partyPlayersGuessed.includes(peer.id)) partyPlayersGuessed.push(peer.id);
+                     checkAllGuessed();
+                } else {
+                     partyRoundState = "over";
+                     broadcastRoundWon(peer.id, myName);
+                }
+            } else {
+                hostConn.send({ type: 'guess_correct', round: partyCurrentRound, points: pointsEarned });
+                if (window.partyGameMode === "score_attack") {
+                     let ro = document.getElementById("round-overlay");
+                     ro.style.display = "flex";
+                     ro.style.backgroundColor = "rgba(46,204,113,0.8)";
+                     document.getElementById("round-overlay-title").innerText = "Correct!";
+                     document.getElementById("round-overlay-subtitle").innerText = `+${pointsEarned} Points. Waiting for others...`;
+                } else {
+                     document.getElementById("loader").style.display = "block";
+                }
+            }
+        } else {
+            let ro = document.getElementById("round-overlay");
+            ro.style.display = "flex";
+            ro.style.backgroundColor = "rgba(200,0,0,0.8)";
+            document.getElementById("round-overlay-title").innerText = "Wrong!";
+            document.getElementById("round-overlay-subtitle").innerText = "Waiting for other players...";
+            if (isHost) {
+                if (!partyPlayersGuessed.includes(peer.id)) partyPlayersGuessed.push(peer.id);
+                checkAllGuessed();
+            } else {
+                hostConn.send({ type: 'guess_wrong', round: partyCurrentRound });
+            }
+        }
+        return;
+    }
+
     if (identifier == answer) {
         score += Math.max(0, ((5 - hintsGiven) * 1000) - time);
     } else {
         if (identifier.split(":")[0] == answer.split(":")[0]) {
-            score += Math.max(0, ((5 - hintsGiven) * 200) - time);
+            score += Math.max(0, ((5 - hintsGiven) * 1000) - time);
         }
         createPopup();
     }
     displayScore();
+    document.getElementById("loader").style.display = "block";
+    await logRound();
     loadRandomLevel();
 }
 
@@ -320,9 +522,7 @@ difficultyButtons.forEach(button => {
             b.classList.remove("difficulty");
         });
         button.classList.add("difficulty");
-        let highScore = localStorage.getItem("GG-Score-" + button.id) || "0";
-        let leaderboard = document.getElementById("lbd");
-        leaderboard.innerText = `High Score: ${highScore}`;
+        loadLeaderboard();
     });
 });
 document.querySelector(".difficulty").click();
@@ -373,21 +573,21 @@ async function loadSearch() {
 
     let results;
     if (difficulty == "impossible") {
-        let searchRes = await fetch("https://api.slin.dev/grab/v1/list?max_format_version=100&type=search&search_term=" + query);
+        let searchRes = await fetch("https://grabguessr.vestri.workers.dev/list?max_format_version=100&type=search&search_term=" + query);
         let data = await searchRes.json();
         results = data;
     } else {
+        let qCompact = query.toLowerCase().replaceAll(" ", "");
         results = verifiedLevels.filter(l => (
-            l.title.toLowerCase().replace(" ", "").includes(query.toLowerCase().replace(" ", "")) ||
-            (l?.creators || []).toString().toLowerCase().replace(" ", "").includes(query.toLowerCase().replace(" ", ""))
+            l.title.toLowerCase().replaceAll(" ", "").includes(qCompact) ||
+            (l?.creators || []).toString().toLowerCase().replaceAll(" ", "").includes(qCompact)
         ));
         if (query.charAt(0) == '"' && query.charAt(query.length - 1) == '"') {
             query = query.substring(1, query.length - 1);
+            qCompact = query.toLowerCase().replaceAll(" ", "");
             results = verifiedLevels.filter(l => (
-                l.title.toLowerCase().replace(" ", "") == (query.toLowerCase().replace(" ", "")) ||
-                l.title.toLowerCase().replace(" ", "") == (query.toLowerCase()) ||
-                l.title.toLowerCase() == (query.toLowerCase().replace(" ", "")) ||
-                l.title.toLowerCase() == (query.toLowerCase())
+                l.title.toLowerCase().replaceAll(" ", "") == qCompact ||
+                l.title.toLowerCase() == query.toLowerCase()
             ));
         }
     }
@@ -400,14 +600,14 @@ async function loadSearch() {
             thumbnail.onerror = () => {
                 thumbnail.style.display = "none";
             };
-            thumbnail.src = "https://grab-images.slin.dev/" + results[i]?.images?.thumb?.key;
+            thumbnail.src = "https://grab-images.slin.dev/" + (results[i]?.thumb || "");
             card.appendChild(thumbnail);
             let title = document.createElement("h3");
             title.innerText = results[i].title;
             title.className = "title";
             card.appendChild(title);
             let creators = document.createElement("p");
-            creators.innerText = results[i].creators;
+            creators.innerText = results[i].creators || "";
             creators.className = "creators";
             card.appendChild(creators);
             document.getElementById("cards").appendChild(card);
@@ -418,6 +618,18 @@ async function loadSearch() {
     }
 }
 document.getElementById("search-submit").addEventListener("click", loadSearch);
+document.getElementById("search").addEventListener("keypress", (e) => {
+    if (e.key === "Enter") loadSearch();
+});
+
+document.getElementById("challenge-btn").addEventListener("click", () => {
+    const seed = Math.floor(Math.random() * 1000000);
+    const url = new URL(window.location.href);
+    url.searchParams.set('challenge', seed);
+    url.searchParams.set('diff', difficulty);
+    navigator.clipboard.writeText(url.toString());
+    alert("Challenge link copied to clipboard!\nShare this with friends to see who can guess these 10 maps fastest!");
+});
 
 async function loadLevel(level) {
     scene = new THREE.Scene();
@@ -547,14 +759,14 @@ function createPopup() {
     thumbnail.onerror = () => {
         thumbnail.style.display = "none";
     };
-    thumbnail.src = "https://grab-images.slin.dev/" + answerJSON?.images?.thumb?.key;
+    thumbnail.src = "https://grab-images.slin.dev/" + (answerJSON?.thumb || "");
     card.appendChild(thumbnail);
     let title = document.createElement("h3");
     title.innerText = answerJSON.title;
     title.className = "title";
     card.appendChild(title);
     let creators = document.createElement("p");
-    creators.innerText = answerJSON.creators;
+    creators.innerText = answerJSON.creators || "";
     creators.className = "creators";
     card.appendChild(creators);
     document.body.appendChild(card);
@@ -917,6 +1129,416 @@ function onWindowResize() {
     camera.updateProjectionMatrix();
     
     renderer.setSize( window.innerWidth, window.innerHeight );
+}
+
+// ====================
+// MULTIPLAYER LOGIC
+// ====================
+document.getElementById("party-btn").addEventListener("click", () => {
+    isMultiplayer = true;
+    isHost = true;
+    document.getElementById("main-menu-panel").style.display = "none";
+    let lbdPanel = document.getElementById("leaderboard-panel");
+    if (lbdPanel) lbdPanel.style.display = "none";
+    document.getElementById("multiplayer-lobby-panel").style.display = "flex";
+    document.getElementById("party-name-container").style.display = "flex";
+});
+
+document.getElementById("party-leave-btn").addEventListener("click", () => {
+    window.location.href = window.location.pathname;
+});
+
+document.getElementById("party-join-btn").addEventListener("click", () => {
+    myName = document.getElementById("party-name").value;
+    if (!myName) {
+        document.getElementById("party-name").style.border = "2px solid red";
+        document.getElementById("party-name").placeholder = "Please enter a name";
+        return;
+    }
+    document.getElementById("party-name").style.border = "none";
+    
+    document.getElementById("party-name-container").style.display = "none";
+    document.getElementById("party-active-container").style.display = "flex";
+    
+    peer = new Peer();
+    
+    peer.on('open', (id) => {
+        if (isHost) {
+            document.getElementById("party-link-container").style.display = "flex";
+            const url = new URL(window.location.href);
+            url.searchParams.set('party', id);
+            document.getElementById("party-link").value = url.toString();
+            document.getElementById("party-start-btn").style.display = "block";
+            document.getElementById("party-settings").style.display = "flex";
+            updatePartyList([{ id: id, name: myName }]);
+        } else {
+            console.log("Connecting to host: " + partyId);
+            hostConn = peer.connect(partyId, { metadata: { name: myName } });
+            setupClientConnection(hostConn);
+        }
+    });
+
+    if (isHost) {
+        peer.on('connection', (conn) => {
+            conn.on('open', () => {
+                partyConnections[conn.peer] = { conn: conn, name: conn.metadata.name };
+                if (typeof multiplayerScores !== 'undefined') multiplayerScores[conn.peer] = 0;
+                broadcastPlayers();
+                
+                if (partyCurrentRound > 0 && partyCurrentRound <= partyLevels.length) {
+                    conn.send({ type: 'start', levels: partyLevels, mode: window.partyGameMode });
+                    if (partyRoundState === "playing") {
+                        conn.send({ type: 'start_round', round: partyCurrentRound, levelData: partyLevels[partyCurrentRound-1] });
+                    }
+                }
+            });
+            conn.on('data', (data) => { handleHostData(conn.peer, data); });
+            conn.on('close', () => { 
+                delete partyConnections[conn.peer]; 
+                if (partyPlayersGuessed.includes(conn.peer)) {
+                    partyPlayersGuessed.splice(partyPlayersGuessed.indexOf(conn.peer), 1);
+                }
+                broadcastPlayers(); 
+                checkAllGuessed();
+            });
+        });
+    }
+});
+
+function broadcastPlayers() {
+    const list = [{id: peer.id, name: myName}, ...Object.values(partyConnections).map(c => ({id: c.conn.peer, name: c.name}))];
+    const data = { type: 'players', list };
+    Object.values(partyConnections).forEach(c => c.conn.send(data));
+    updatePartyList(list);
+}
+
+function updatePartyList(list) {
+    if (typeof window.partyDisplayNames === 'undefined') window.partyDisplayNames = {};
+    const ul = document.getElementById("party-players");
+    ul.innerHTML = "";
+    list.forEach(p => {
+        window.partyDisplayNames[p.id] = p.name;
+        ul.innerHTML += `<li>${p.name} ${p.id === peer?.id ? "(You)" : ""}</li>`;
+    });
+}
+
+function setupClientConnection(conn) {
+    conn.on('open', () => {
+        console.log("Connected to host");
+    });
+    conn.on('close', () => {
+        let ro = document.getElementById("round-overlay");
+        ro.style.display = "flex";
+        ro.style.backgroundColor = "rgba(0,0,0,0.8)";
+        document.getElementById("round-overlay-title").innerText = "Disconnected";
+        document.getElementById("round-overlay-subtitle").innerText = "The host left. Reloading game...";
+        setTimeout(() => { window.location.href = window.location.pathname; }, 3000);
+    });
+    conn.on('data', (data) => {
+        if (data.type === 'players') {
+            updatePartyList(data.list);
+        } else if (data.type === 'start') {
+            window.partyGameMode = data.mode;
+            partyLevels = data.levels;
+            document.getElementById("multiplayer-lobby-panel").style.display = "none";
+            startMultiplayerGame();
+        } else if (data.type === 'start_round') {
+            document.getElementById("round-overlay").style.display = "none";
+            let popup = document.getElementsByClassName("popup");
+            if(popup.length > 0) popup[0].remove();
+            
+            if (data.round) partyCurrentRound = data.round;
+            partyLevels[partyCurrentRound-1] = data.levelData;
+            
+            partyPlayersGuessed = [];
+            partyRoundState = "playing";
+            window.localGuessLocked = false;
+            time = 0;
+            round = partyCurrentRound;
+            displayRound();
+            if (window.partyTimeLimit > 0) document.getElementById("time").innerText = "Time Left: " + window.partyTimeLimit;
+            isLoading = true;
+            document.getElementById("loader").style.display = "block";
+            
+            executeMultiplayerRound();
+        } else if (data.type === 'round_won') {
+            partyRoundState = "over";
+            let ro = document.getElementById("round-overlay");
+            ro.style.display = "flex";
+            ro.style.backgroundColor = "rgba(46,204,113,0.8)";
+            document.getElementById("round-overlay-title").innerText = "Round over!";
+            document.getElementById("round-overlay-subtitle").innerText = `${data.winnerName} guessed it first!`;
+            
+            if (data.scores) populateRoundLeaderboard(data.scores);
+            
+            partyCurrentRound++;
+            if (partyCurrentRound > partyLevels.length) {
+                setTimeout(() => {
+                    ro.style.display = "none";
+                    showMultiplayerEnd(data.scores);
+                }, 3000);
+            } else {
+                setTimeout(() => {
+                    ro.style.display = "none";
+                }, 4000); // Wait 4s to view leaderboard
+            }
+        } else if (data.type === 'round_over_all_wrong' || data.type === 'round_over_score_attack') {
+            document.getElementById("round-overlay").style.display = "none";
+            createPopup();
+            
+            partyCurrentRound++;
+            
+            // Show round-end overlay locally after popup for Score Attack logic!
+            setTimeout(() => {
+                 let ro = document.getElementById("round-overlay");
+                 ro.style.display = "flex";
+                 ro.style.backgroundColor = "rgba(0,0,0,0.5)";
+                 let rob = document.getElementById("round-overlay-box");
+                 if (rob) rob.style.borderColor = "rgba(255,255,255,0.2)";
+                 document.getElementById("round-overlay-title").innerText = "Round Over!";
+                 document.getElementById("round-overlay-subtitle").innerText = "Reviewing Standings...";
+                 if (data.scores) populateRoundLeaderboard(data.scores);
+                 
+                 setTimeout(() => {
+                     if (partyCurrentRound > partyLevels.length) {
+                         let popup = document.getElementsByClassName("popup");
+                         if (popup.length > 0) popup[0].remove();
+                         ro.style.display = "none";
+                         showMultiplayerEnd(data.scores);
+                     } else {
+                         ro.style.display = "none";
+                     }
+                 }, 4000);
+            }, 3000); // Offset 3s so they can actually view the physical in-game text popup.
+        } else if (data.type === 'game_over') {
+            showMultiplayerEnd(data.scores);
+        }
+    });
+}
+
+document.getElementById("party-start-btn").addEventListener("click", () => {
+    let pdiff = document.getElementById("party-settings-diff").value;
+    let prounds = parseInt(document.getElementById("party-settings-rounds").value) || 10;
+    window.partyTimeLimit = parseInt(document.getElementById("party-settings-time").value) || 0;
+    window.partyGameMode = document.getElementById("party-settings-mode").value || "normal";
+    
+    let diff = pdiff === "impossible" ? 500 : parseInt(pdiff);
+    partyLevels = [];
+    for(let i=0; i<prounds; i++) {
+        partyLevels.push(sortedLevels[Math.floor(Math.random() * Math.min(diff, sortedLevels.length - 1))]);
+    }
+    // ensure var exists if we clicked host
+    if (typeof multiplayerScores === 'undefined') window.multiplayerScores = {};
+    Object.keys(multiplayerScores).forEach(k => multiplayerScores[k] = 0);
+    multiplayerScores[peer.id] = 0;
+    
+    Object.values(partyConnections).forEach(c => c.conn.send({ type: 'start', levels: partyLevels, mode: window.partyGameMode }));
+    document.getElementById("multiplayer-lobby-panel").style.display = "none";
+    startMultiplayerGame();
+});
+
+function startMultiplayerGame() {
+    partyCurrentRound = 1;
+    score = 0;
+    loadMultiplayerRound();
+}
+
+async function loadMultiplayerRound() {
+    if (isLoading) return;
+    document.getElementById("home").style.display = "none";
+    partyPlayersGuessed = [];
+    partyRoundState = "playing";
+    window.localGuessLocked = false;
+    document.getElementById("round-overlay").style.display = "none";
+    
+    time = 0;
+    round = partyCurrentRound;
+    displayRound();
+    isLoading = true;
+    document.getElementById("loader").style.display = "block";
+    
+    if (isHost) {
+        let randomLevel = partyLevels[partyCurrentRound-1];
+        if (!randomLevel.data_key) {
+            let reqData = await fetch(`https://grabguessr.vestri.workers.dev/details/${randomLevel.identifier.split(":").join("/")}`);
+            randomLevel = await reqData.json();
+            partyLevels[partyCurrentRound-1] = randomLevel;
+        }
+        
+        Object.values(partyConnections).forEach(c => c.conn.send({ type: 'start_round', round: partyCurrentRound, levelData: randomLevel }));
+        executeMultiplayerRound();
+    }
+}
+
+async function executeMultiplayerRound() {
+    let randomLevel = partyLevels[partyCurrentRound-1];
+    answer = randomLevel.identifier;
+    answerJSON = randomLevel;
+    hintsGiven = 0;
+    hintButtons.forEach(btn => btn.classList.remove("unlocked"));
+    startHint.classList.add("unlocked");
+    displayBonus();
+    
+    const downloadUrl = `https://grabguessr.vestri.workers.dev/download/${randomLevel.data_key.replace("level_data:", "").split(":").join("/")}`;
+    let level = await openProto(downloadUrl);
+    
+    await loadLevel(level);
+    isLoading = false;
+    document.getElementById("loader").style.display = "none";
+}
+
+function handleHostData(peerId, data) {
+    if (partyRoundState !== "playing") return;
+    
+    if (data.type === 'guess_correct') {
+        if (data.round === partyCurrentRound) {
+            multiplayerScores[peerId] = (multiplayerScores[peerId] || 0) + (data.points || 5000);
+            
+            if (window.partyGameMode === "score_attack") {
+                if (!partyPlayersGuessed.includes(peerId)) partyPlayersGuessed.push(peerId);
+                checkAllGuessed();
+            } else {
+                partyRoundState = "over";
+                broadcastRoundWon(peerId, partyConnections[peerId].name);
+            }
+        }
+    } else if (data.type === 'guess_wrong') {
+        if (data.round === partyCurrentRound) {
+            if (!partyPlayersGuessed.includes(peerId)) partyPlayersGuessed.push(peerId);
+            checkAllGuessed();
+        }
+    }
+}
+
+function populateRoundLeaderboard(scores) {
+    let container = document.getElementById("round-overlay-leaderboard");
+    if (!container) {
+        container = document.createElement("div");
+        container.id = "round-overlay-leaderboard";
+        container.style.marginTop = "25px";
+        container.style.padding = "20px";
+        container.style.background = "rgba(0,0,0,0.5)";
+        container.style.borderRadius = "12px";
+        container.style.border = "1px solid rgba(255,255,255,0.1)";
+        container.style.color = "white";
+        container.style.width = "100%";
+        container.style.boxSizing = "border-box";
+        let rob = document.getElementById("round-overlay-box");
+        if (rob) rob.appendChild(container);
+    }
+    container.style.display = "block";
+    container.innerHTML = "<h3 style='margin:0 0 15px 0; text-align:center; text-transform:uppercase; letter-spacing:1px; font-size:1.1rem; color:rgba(255,255,255,0.8); border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px;'>Current Standings</h3>";
+    
+    let sorted = Object.entries(scores).map(([id, s]) => {
+        let name = id === peer.id ? myName : (window.partyDisplayNames?.[id] || "Unknown");
+        return { name, s };
+    }).sort((a,b) => b.s - a.s);
+    
+    sorted.slice(0, 5).forEach((entry, i) => { // Top 5
+        let rankColor = i === 0 ? "#FFD700" : i === 1 ? "#C0C0C0" : i === 2 ? "#CD7F32" : "rgba(255,255,255,0.5)";
+        container.innerHTML += `<div style='margin:8px 0; padding:10px 15px; background:rgba(255,255,255,0.05); border-radius:6px; display:flex; justify-content:space-between; align-items: center; font-weight:500; font-size:1.1rem;'>
+            <span style="display:flex; align-items:center; gap: 10px;">
+                <span style="color: ${rankColor}; font-weight: bold; font-size: 1.2rem; width: 20px; text-align:center;">${i + 1}</span>
+                <span style="color: rgba(255,255,255,0.9);">${entry.name}</span>
+            </span>
+            <span style="color:#4facfe; font-family: monospace; font-size: 1.2rem;">${entry.s}</span>
+        </div>`;
+    });
+}
+
+function checkAllGuessed() {
+    if (partyRoundState !== "playing" && partyRoundState !== "over") return;
+    let totalPlayers = Object.keys(partyConnections).length + 1;
+    if (partyPlayersGuessed.length >= totalPlayers) {
+        partyRoundState = "over";
+        let s = { [peer.id]: multiplayerScores[peer.id] || 0 };
+        Object.keys(partyConnections).forEach(k => { s[k] = multiplayerScores[k] || 0; });
+        
+        let typeStr = (window.partyGameMode === "score_attack") ? 'round_over_score_attack' : 'round_over_all_wrong';
+        Object.values(partyConnections).forEach(c => c.conn.send({ type: typeStr, scores: s }));
+        
+        document.getElementById("round-overlay").style.display = "none";
+        createPopup();
+        
+        setTimeout(() => {
+             let ro = document.getElementById("round-overlay");
+             ro.style.display = "flex";
+             ro.style.backgroundColor = "rgba(0,0,0,0.8)";
+             document.getElementById("round-overlay-title").innerText = "Round Over!";
+             document.getElementById("round-overlay-subtitle").innerText = "Reviewing Standings...";
+             populateRoundLeaderboard(s);
+             
+             setTimeout(() => {
+                 partyCurrentRound++;
+                 ro.style.display = "none";
+                 if (partyCurrentRound <= partyLevels.length) loadMultiplayerRound();
+                 else showMultiplayerEnd(s);
+             }, 4000);
+        }, 3000);
+    }
+}
+
+function checkAllGuessedForceFail() {
+    Object.keys(partyConnections).forEach(k => {
+        if (!partyPlayersGuessed.includes(k)) partyPlayersGuessed.push(k);
+    });
+    if (!partyPlayersGuessed.includes(peer.id)) partyPlayersGuessed.push(peer.id);
+    
+    partyRoundState = "playing"; // Reset purely to trigger checkAllGuessed
+    checkAllGuessed();
+}
+
+function broadcastRoundWon(winnerId, winnerName) {
+    partyRoundState = "over";
+    let s = { [peer.id]: multiplayerScores[peer.id] || 0 };
+    Object.keys(partyConnections).forEach(k => { s[k] = multiplayerScores[k] || 0; });
+    
+    Object.values(partyConnections).forEach(c => c.conn.send({ type: 'round_won', winnerId, winnerName, scores: s }));
+    
+        let ro = document.getElementById("round-overlay");
+        ro.style.display = "flex";
+        ro.style.backgroundColor = "rgba(0,0,0,0.5)";
+        let rob = document.getElementById("round-overlay-box");
+        if (rob) rob.style.borderColor = "rgba(46,204,113,0.5)";
+        document.getElementById("round-overlay-title").innerText = "Round over!";
+    document.getElementById("round-overlay-subtitle").innerText = `${winnerName} guessed it first!`;
+    
+    populateRoundLeaderboard(s);
+    
+    partyCurrentRound++;
+    setTimeout(() => {
+        ro.style.display = "none";
+        if (partyCurrentRound <= partyLevels.length) loadMultiplayerRound();
+        else showMultiplayerEnd(s);
+    }, 4000);
+}
+
+function showMultiplayerEnd(scores) {
+    home.style.display = "flex";
+    document.getElementById("main-menu-panel").style.display = "none";
+    let lbdPanel = document.getElementById("leaderboard-panel");
+    if (lbdPanel) lbdPanel.style.display = "none";
+    document.getElementById("multiplayer-lobby-panel").style.display = "flex";
+    
+    if (isHost) {
+        document.getElementById("party-start-btn").innerText = "Play Again";
+        document.getElementById("party-start-btn").style.display = "block";
+        document.getElementById("party-settings").style.display = "flex";
+    }
+    
+    document.getElementById("submit-score").style.display = "none";
+    
+    let leaderboard = document.getElementById("lbd");
+    leaderboard.innerHTML = "<h3>Party Leaderboard</h3>";
+    
+    let sorted = Object.entries(scores).map(([id, s]) => {
+        let name = id === peer.id ? myName : (window.partyDisplayNames?.[id] || "Unknown");
+        return { name, s };
+    }).sort((a,b) => b.s - a.s);
+    
+    sorted.forEach((entry, i) => {
+        leaderboard.innerHTML += `<p>${i + 1}. ${entry.name}: ${entry.s}</p>`;
+    });
 }
 
 init();

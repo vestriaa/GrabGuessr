@@ -13,7 +13,10 @@
     <meta property="og:type" content="website">
     <meta property="og:url" content="http://twhlynch.me/GrabGuessr">
     <meta property="og:image" content="http://twhlynch.me/GrabGuessr/logo.png">
-    <link rel="icon" href="favicon.png" type="image/png">
+    <link rel="icon" type="image/png" href="logo.png">
+    
+    <!-- Multiplayer WebRTC Library -->
+    <script src="https://unpkg.com/peerjs@1.5.1/dist/peerjs.min.js"></script>
     <!-- Google tag (gtag.js) -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-BDS57RBQ3Q"></script>
     <script>
@@ -89,7 +92,7 @@
         </button>
     </div>
     <section id="home">
-        <div class="panel">
+        <div class="panel" id="main-menu-panel">
             <h1>
                 <img src="logo.png" alt="GrabGuessr">
             </h1>
@@ -101,14 +104,105 @@
                 <button class="diff" id="9999999">Hard</button>
                 <button class="diff" id="impossible">Impossible</button>
             </div>
-            <button id="start">
-                <svg id="loader" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="#fff"><style>.spinner_z9k8{transform-origin:center;animation:spinner_StKS .75s infinite linear}@keyframes spinner_StKS{100%{transform:rotate(360deg)}}</style><path d="M12,1A11,11,0,1,0,23,12,11,11,0,0,0,12,1Zm0,19a8,8,0,1,1,8-8A8,8,0,0,1,12,20Z" opacity=".25"/><path d="M12,4a8,8,0,0,1,7.89,6.7A1.53,1.53,0,0,0,21.38,12h0a1.5,1.5,0,0,0,1.48-1.75,11,11,0,0,0-21.72,0A1.5,1.5,0,0,0,2.62,12h0a1.53,1.53,0,0,0,1.49-1.3A8,8,0,0,1,12,4Z" class="spinner_z9k8"/></svg>
-                <svg id="start-button" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="display:none">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z" />
-                </svg>
-            </button>
+            <div style="display: flex; gap: 30px; margin-top: 20px; overflow: visible; justify-content: center;">
+                <button id="start" style="overflow: visible;">
+                    <svg id="loader" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="#fff"><style>.spinner_z9k8{transform-origin:center;animation:spinner_StKS .75s infinite linear}@keyframes spinner_StKS{100%{transform:rotate(360deg)}}</style><path d="M12,1A11,11,0,1,0,23,12,11,11,0,0,0,12,1Zm0,19a8,8,0,1,1,8-8A8,8,0,0,1,12,20Z" opacity=".25"/><path d="M12,4a8,8,0,0,1,7.89,6.7A1.53,1.53,0,0,0,21.38,12h0a1.5,1.5,0,0,0,1.48-1.75,11,11,0,0,0-21.72,0A1.5,1.5,0,0,0,2.62,12h0a1.53,1.53,0,0,0,1.49-1.3A8,8,0,0,1,12,4Z" class="spinner_z9k8"/></svg>
+                    <svg id="start-button" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="display:none">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z" />
+                    </svg>
+                </button>
+                <button id="challenge-btn" style="display:none; overflow: visible;">
+                    <svg id="challenge-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0-10.628a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5m0 10.628a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5" />
+                    </svg>
+                </button>
+                <button id="party-btn" style="display:none; overflow: visible;">
+                    <svg id="party-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z" />
+                    </svg>
+                </button>
+            </div>
         </div>
+
+        <!-- Multiplayer Lobby Panel -->
+        <div class="panel" id="multiplayer-lobby-panel" style="display:none; flex-direction:column; align-items:center; min-height: 300px; justify-content: center; width: 450px;">
+            <h2 style="font-size: 2.2rem; margin-bottom: 5px; text-shadow: 0 2px 10px rgba(0,0,0,0.3);">Multiplayer Party</h2>
+            <p style="color: rgba(255,255,255,0.7); margin-top: 0; margin-bottom: 25px;">Team up and guess the map!</p>
+            
+            <div id="party-name-container" style="display:flex; flex-direction:column; align-items:center; gap:15px; width: 100%;">
+                <input type="text" id="party-name" placeholder="Enter your name..." style="padding: 12px 20px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.3); background: rgba(0,0,0,0.4); color: white; width: 80%; font-size: 1.1rem; text-align: center; outline: none; transition: all 0.2s;">
+                <button id="party-join-btn" style="padding: 12px 30px; background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: white; border: none; border-radius: 8px; font-weight: bold; font-size: 1.1rem; cursor: pointer; width: 80%; box-shadow: 0 4px 15px rgba(56, 239, 125, 0.4); transition: transform 0.2s, box-shadow 0.2s;">Join Party</button>
+            </div>
+            
+            <div id="party-active-container" style="display:none; flex-direction:column; align-items:center; gap:15px; width: 100%;">
+                <div id="party-link-container" style="display:none; flex-direction:column; align-items:center; width: 100%; gap: 8px;">
+                    <span style="font-size: 0.9rem; color: rgba(255,255,255,0.8); text-transform: uppercase; letter-spacing: 1px;">Invite Link</span>
+                    <input type="text" id="party-link" readonly onclick="this.select()" style="padding: 12px; width: 90%; text-align: center; border-radius: 8px; background: rgba(0,0,0,0.5); color: #4facfe; border: 1px solid rgba(79, 172, 254, 0.5); font-family: monospace; font-size: 1rem; cursor: copy; outline: none;">
+                </div>
+                
+                <div id="party-settings" style="display:none; flex-direction:column; align-items:stretch; gap: 12px; width: 90%; background: rgba(0,0,0,0.3); padding: 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.2); box-shadow: inset 0 2px 10px rgba(0,0,0,0.2);">
+                    <p style="margin: 0 0 5px 0; font-weight: 600; font-size: 1.1rem; color: rgba(255,255,255,0.9); text-align: center;">Match Settings</p>
+                    
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-size: 0.9rem; color: rgba(255,255,255,0.8);">Game Mode</span>
+                        <select id="party-settings-mode" style="padding: 6px 10px; border-radius: 6px; background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.3); outline: none;">
+                            <option style="color: black;" value="normal">Fastest Wins</option>
+                            <option style="color: black;" value="score_attack">Score Attack</option>
+                        </select>
+                    </div>
+                    
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-size: 0.9rem; color: rgba(255,255,255,0.8);">Difficulty</span>
+                        <select id="party-settings-diff" style="padding: 6px 10px; border-radius: 6px; background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.3); outline: none;">
+                            <option style="color: black;" value="10">Easy (Top 10)</option>
+                            <option style="color: black;" value="50">Normal (Top 50)</option>
+                            <option style="color: black;" value="500">Hard (Top 500)</option>
+                            <option style="color: black;" value="10000">Expert (Top 10k)</option>
+                            <option style="color: black;" value="impossible">Global Random</option>
+                        </select>
+                    </div>
+                    
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-size: 0.9rem; color: rgba(255,255,255,0.8);">Total Rounds</span>
+                        <input type="number" id="party-settings-rounds" value="10" min="1" max="100" style="padding: 6px 10px; border-radius: 6px; width: 60px; background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.3); outline: none; text-align: center;">
+                    </div>
+                    
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-size: 0.9rem; color: rgba(255,255,255,0.8);">Time Limit</span>
+                        <select id="party-settings-time" style="padding: 6px 10px; border-radius: 6px; background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.3); outline: none;">
+                            <option style="color: black;" value="0">Unlimited</option>
+                            <option style="color: black;" value="15">15 Seconds</option>
+                            <option style="color: black;" value="30">30 Seconds</option>
+                            <option style="color: black;" value="60">60 Seconds</option>
+                            <option style="color: black;" value="120">120 Secs</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div style="width: 90%; background: rgba(0,0,0,0.2); border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); padding: 10px;">
+                    <p style="margin: 0 0 10px 0; font-size: 0.85rem; color: rgba(255,255,255,0.6); text-transform: uppercase; text-align: center;">Connected Players</p>
+                    <ul id="party-players" style="list-style:none; padding:0; margin: 0; min-height: 50px; display: flex; flex-direction: column; gap: 5px;">
+                        <li style="text-align: center; color: rgba(255,255,255,0.5); padding: 5px;">Waiting for players...</li>
+                    </ul>
+                </div>
+                
+                <button id="party-start-btn" style="display:none; margin-top: 10px; padding: 15px 30px; background: linear-gradient(135deg, #FF416C 0%, #FF4B2B 100%); color: white; border: none; border-radius: 8px; font-weight: bold; font-size: 1.2rem; cursor: pointer; width: 90%; box-shadow: 0 4px 15px rgba(255, 75, 43, 0.4); transition: transform 0.2s, box-shadow 0.2s; text-transform: uppercase; letter-spacing: 1px;">Start Game</button>
+            </div>
+            <button id="party-leave-btn" style="padding: 10px 20px; background: rgba(255,0,0,0.3); color: rgba(255,255,255,0.8); border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; cursor: pointer; margin-top: 20px; transition: all 0.2s;">Leave Party</button>
+        </div>
+
         <div class="leaderboard" id="lbd"></div>
+        <div id="submit-score" style="display:none; flex-direction: column; align-items: center; gap: 10px; margin-top: 20px;">
+            <input type="text" id="player-name" placeholder="Enter your name..." style="padding: 10px; border-radius: 5px; border: none;">
+            <button id="submit-btn" style="padding: 10px 20px; background: #2ecc71; color: white; border: none; border-radius: 5px; cursor: pointer;">Submit Score</button>
+        </div>
     </section>
+
+    <div id="round-overlay" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.3); z-index: 100; flex-direction: column; justify-content:center; align-items:center; backdrop-filter: blur(12px); box-shadow: inset 0 0 100px rgba(0,0,0,0.5); transition: background-color 0.3s ease;">
+        <div id="round-overlay-box" style="padding: 40px 60px; background: rgba(0,0,0,0.6); border-radius: 20px; border: 1px solid rgba(255,255,255,0.2); box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5); display: flex; flex-direction: column; align-items: center; border-top: 1px solid rgba(255,255,255,0.4); min-width: 350px;">
+            <p id="round-overlay-title" style="color: white; font-size: 3.5rem; margin: 0; text-shadow: 0 4px 15px rgba(0,0,0,0.5); font-weight: 800; letter-spacing: 2px;">Wrong!</p>
+            <p id="round-overlay-subtitle" style="color: rgba(255,255,255,0.9); font-size: 1.5rem; margin: 15px 0 0 0; font-weight: 400;">Waiting for other players...</p>
+        </div>
+    </div>
 </body>
 </html>
