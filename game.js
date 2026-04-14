@@ -9,9 +9,8 @@ fetch('https://grab-tools.live/proto/proto.proto')
 .then(d => d.text())
 .then(text => {
     PROTOBUF_DATA = text;
-    console.log(PROTOBUF_DATA);
 })
-.catch(e => console.log(e));
+.catch(e => {});
 // import * as SHADERS from './shaders.js';
 // import { PROTOBUF_DATA } from './protobuf.js';
 
@@ -300,15 +299,12 @@ async function init() {
 
     window.addEventListener( 'resize', onWindowResize );
 
-    console.log("Generating assets");
-
     await initAttributes();
     isLoading = false;
     document.getElementById("loader").style.display = "none";
     document.getElementById("start-button").style.display = "block";
     document.getElementById("challenge-btn").style.display = "block";
     document.getElementById("party-btn").style.display = "block";
-    console.log("Loaded");
 
     if (partyId) {
         document.getElementById("main-menu-panel").style.display = "none";
@@ -366,7 +362,6 @@ async function loadRandomLevel() {
     time = 0;
     displayRound();
     let randomLevel;
-    console.log(difficulty);
     if (difficulty == "impossible") {
         let reqData = await fetch("https://grabguessr.vestri.workers.dev/get_random_level");
         let data = await reqData.json();
@@ -517,7 +512,6 @@ difficultyButtons.forEach(button => {
         if (difficulty.toString() == "NaN") {
             difficulty = button.id;
         }
-        console.log(difficulty);
         difficultyButtons.forEach(b => {
             b.classList.remove("difficulty");
         });
@@ -643,8 +637,6 @@ async function loadLevel(level) {
     
     let ambience = level.ambienceSettings;
     
-    console.log(ambience);
-    
     if (ambience) {
         if (ambience.skyHorizonColor) {
             ambience.skyHorizonColor?.r ? null : ambience.skyHorizonColor.r = 0;
@@ -690,7 +682,6 @@ async function loadLevel(level) {
     sunColorFactor += 0.2
     let sunColor = [horizonColor[0] * (1.0 - sunColorFactor) + sunColorFactor, horizonColor[1] * (1.0 - sunColorFactor) + sunColorFactor, horizonColor[2] * (1.0 - sunColorFactor) + sunColorFactor]
 
-    console.log(sunColor);
     skyMaterial.uniforms["sunDirection"] = { value: skySunDirection }
     skyMaterial.uniforms["sunColor"] = { value: sunColor }
 
