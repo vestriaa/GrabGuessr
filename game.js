@@ -454,7 +454,9 @@ async function guess(identifier) {
                 if (window.partyGameMode === "score_attack") {
                      let ro = document.getElementById("round-overlay");
                      ro.style.display = "flex";
-                     ro.style.backgroundColor = "rgba(46,204,113,0.8)";
+                     ro.style.backgroundColor = "rgba(0,0,0,0.5)";
+                     let rob = document.getElementById("round-overlay-box");
+                     if (rob) rob.style.borderColor = "rgba(46,204,113,0.5)";
                      document.getElementById("round-overlay-title").innerText = "Correct!";
                      document.getElementById("round-overlay-subtitle").innerText = `+${pointsEarned} Points. Waiting for others...`;
                      if (!partyPlayersGuessed.includes(peer.id)) partyPlayersGuessed.push(peer.id);
@@ -468,7 +470,9 @@ async function guess(identifier) {
                 if (window.partyGameMode === "score_attack") {
                      let ro = document.getElementById("round-overlay");
                      ro.style.display = "flex";
-                     ro.style.backgroundColor = "rgba(46,204,113,0.8)";
+                     ro.style.backgroundColor = "rgba(0,0,0,0.5)";
+                     let rob = document.getElementById("round-overlay-box");
+                     if (rob) rob.style.borderColor = "rgba(46,204,113,0.5)";
                      document.getElementById("round-overlay-title").innerText = "Correct!";
                      document.getElementById("round-overlay-subtitle").innerText = `+${pointsEarned} Points. Waiting for others...`;
                 } else {
@@ -478,7 +482,9 @@ async function guess(identifier) {
         } else {
             let ro = document.getElementById("round-overlay");
             ro.style.display = "flex";
-            ro.style.backgroundColor = "rgba(200,0,0,0.8)";
+            ro.style.backgroundColor = "rgba(0,0,0,0.5)";
+            let rob = document.getElementById("round-overlay-box");
+            if (rob) rob.style.borderColor = "rgba(200,0,0,0.5)";
             document.getElementById("round-overlay-title").innerText = "Wrong!";
             document.getElementById("round-overlay-subtitle").innerText = "Waiting for other players...";
             if (isHost) {
@@ -1256,7 +1262,9 @@ function setupClientConnection(conn) {
             partyRoundState = "over";
             let ro = document.getElementById("round-overlay");
             ro.style.display = "flex";
-            ro.style.backgroundColor = "rgba(46,204,113,0.8)";
+            ro.style.backgroundColor = "rgba(0,0,0,0.5)";
+            let rob = document.getElementById("round-overlay-box");
+            if (rob) rob.style.borderColor = "rgba(46,204,113,0.5)";
             document.getElementById("round-overlay-title").innerText = "Round over!";
             document.getElementById("round-overlay-subtitle").innerText = `${data.winnerName} guessed it first!`;
             
@@ -1340,7 +1348,11 @@ async function loadMultiplayerRound() {
     partyPlayersGuessed = [];
     partyRoundState = "playing";
     window.localGuessLocked = false;
+    answer = ""; // Clear stale answer immediately to prevent race-condition spam exploits
+    document.getElementById("cards").innerHTML = ""; // Wipe old search results
     document.getElementById("round-overlay").style.display = "none";
+    let leaderboardEl = document.getElementById("round-overlay-leaderboard");
+    if (leaderboardEl) leaderboardEl.style.display = "none";
     
     time = 0;
     round = partyCurrentRound;
